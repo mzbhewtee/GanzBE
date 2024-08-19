@@ -9,21 +9,23 @@ const port = process.env.PORT || 5000; // Use environment variable or default to
 app.use(cors());
 app.use(express.json());
 
-// Create a MySQL connection using Clever Cloud credentials
-const db = mysql.createConnection({
+// Create a MySQL connection pool using Clever Cloud credentials
+const db = mysql.createPool({
+  connectionLimit: 10, // Set the maximum number of connections in the pool
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME
 });
 
-// Connect to the database
-db.connect((err) => {
+// Test the connection
+db.getConnection((err, connection) => {
   if (err) {
     console.error('Database connection error:', err);
     return;
   }
   console.log('Connected to the MySQL database.');
+  connection.release(); // Release the connection back to the pool
 });
 
 // Define an API route to get land use data
