@@ -42,10 +42,10 @@ app.get('/land', (req, res) => {
 
 // Define an API route to get climate data
 app.get('/climate', (req, res) => {
-  db.query('SELECT * FROM climatechangeemissions', (err, results) => {
+  db.query('SELECT * FROM climate_rwanda', (err, results) => {
     if (err) {
-      console.error('Error fetching data from climatechangeemissions:', err);
-      res.status(500).send('Error fetching data from climatechangeemissions');
+      console.error('Error fetching data from climate_rwanda:', err);
+      res.status(500).send('Error fetching data from climate_rwanda');
       return;
     }
     res.json(results);
@@ -54,10 +54,10 @@ app.get('/climate', (req, res) => {
 
 // Define an API route to get agriculture data
 app.get('/agriculture', (req, res) => {
-  db.query('SELECT * FROM agriculture_data', (err, results) => {
+  db.query('SELECT * FROM agriculture_rwanda', (err, results) => {
     if (err) {
-      console.error('Error fetching data from agriculture_data:', err);
-      res.status(500).send('Error fetching data from agriculture_data');
+      console.error('Error fetching data from agriculture_rwanda:', err);
+      res.status(500).send('Error fetching data from agriculture_rwanda');
       return;
     }
     res.json(results);
