@@ -68,25 +68,39 @@ app.put('/update-table-data', (req, res) => {
     return res.status(400).send('Invalid table name');
   }
 
-  // Generate the UPDATE queries
-  const updates = data.map(row => {
-    const columns = Object.keys(row);
-    const values = Object.values(row);
-    const setClause = columns.map((col, i) => `${col} = ?`).join(', ');
-    return `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
-  });
+  if (!Array.isArray(data) || data.length === 0) {
+    return res.status(400).send('No data provided');
+  }
 
-  const ids = data.map(row => row.id);
-  const values = data.flatMap(row => Object.values(row).slice(0, -1)); // Exclude 'id' column values
+  try {
+    // Generate the UPDATE queries
+    const updates = data.map(row => {
+      const columns = Object.keys(row);
+      const values = Object.values(row);
+      const setClause = columns.map((col, i) => `${col} = ?`).join(', ');
+      return `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
+    });
 
-  pool.query(updates.join('; '), [...values, ...ids], (err, results) => {
-    if (err) {
-      console.error('Error updating table data:', err);
-      return res.status(500).send('Error updating table data');
-    }
-    res.send('Table data updated successfully');
-  });
+    const ids = data.map(row => row.id);
+    const values = data.flatMap(row => Object.values(row).slice(0, -1)); // Exclude 'id' column values
+
+    console.log('Updates:', updates);
+    console.log('Values:', values);
+    console.log('IDs:', ids);
+
+    pool.query(updates.join('; '), [...values, ...ids], (err, results) => {
+      if (err) {
+        console.error('Error executing query:', err);
+        return res.status(500).send('Error updating table data');
+      }
+      res.send('Table data updated successfully');
+    });
+  } catch (error) {
+    console.error('Error in update-table-data route:', error);
+    res.status(500).send('Internal server error');
+  }
 });
+
 
 
 // Define a route to fetch data from any agriculture table
