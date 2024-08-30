@@ -28,55 +28,49 @@ pool.getConnection((err, connection) => {
   connection.release(); // Release the connection back to the pool
 });
 
-// Route to add a new table to the database
-app.post('/add-table', (req, res) => {
-  const { tableName, columns } = req.body;
-
-  // Construct the CREATE TABLE query
-  let createTableQuery = `CREATE TABLE ${tableName} (`;
-  const columnDefinitions = columns.map(
-    (col) => `${col.name} ${col.type} ${col.notNull ? 'NOT NULL' : ''} ${col.autoIncrement ? 'AUTO_INCREMENT' : ''}`
-  );
-  createTableQuery += columnDefinitions.join(', ') + ');';
-
-  pool.query(createTableQuery, (err, results) => {
+// Route to get all table names
+app.get('/tables', (req, res) => {
+  pool.query("SHOW TABLES", (err, results) => {
     if (err) {
-      console.error('Error creating table:', err);
-      return res.status(500).send('Error creating table');
+      console.error('Error fetching table names:', err);
+      return res.status(500).send('Error fetching table names');
     }
-    res.send(`Table ${tableName} created successfully`);
+    const tables = results.map(row => Object.values(row)[0]);
+    res.json(tables);
   });
 });
 
-// Route to edit an existing table
-app.put('/edit-table', (req, res) => {
-  const { tableName, oldColumnName, newColumnName, newType } = req.body;
+// Route to get data from a specific table
+app.get('/table-data/:tableName', (req, res) => {
+  const tableName = req.params.tableName;
 
-  // Construct the ALTER TABLE query
-  const alterTableQuery = `ALTER TABLE ${tableName} CHANGE ${oldColumnName} ${newColumnName} ${newType};`;
-
-  pool.query(alterTableQuery, (err, results) => {
+  pool.query(`SELECT * FROM ${tableName}`, (err, results) => {
     if (err) {
-      console.error('Error modifying table:', err);
-      return res.status(500).send('Error modifying table');
+      console.error(`Error fetching data from ${tableName}:`, err);
+      return res.status(500).send(`Error fetching data from ${tableName}`);
     }
-    res.send(`Table ${tableName} modified successfully`);
+    res.json(results);
   });
 });
 
-// Route to delete an existing table
-app.delete('/delete-table', (req, res) => {
-  const { tableName } = req.body;
+// Route to update data in a specific table
+app.put('/update-table-data', (req, res) => {
+  const { tableName, data } = req.body;
 
-  // Construct the DROP TABLE query
-  const dropTableQuery = `DROP TABLE ${tableName};`;
+  // Generate the UPDATE query based on the data
+  const updates = data.map(row => {
+    const columns = Object.keys(row);
+    const values = Object.values(row);
+    const setClause = columns.map((col, i) => `${col} = ?`).join(', ');
+    return `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
+  });
 
-  pool.query(dropTableQuery, (err, results) => {
+  pool.query(updates.join('; '), values.flat().concat(ids), (err, results) => {
     if (err) {
-      console.error('Error deleting table:', err);
-      return res.status(500).send('Error deleting table');
+      console.error('Error updating table data:', err);
+      return res.status(500).send('Error updating table data');
     }
-    res.send(`Table ${tableName} deleted successfully`);
+    res.send('Table data updated successfully');
   });
 });
 
