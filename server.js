@@ -53,6 +53,45 @@ app.get('/table-data/:tableName', (req, res) => {
   });
 });
 
+// Route to create a new table
+app.post('/create-table', (req, res) => {
+  const { tableName, columns } = req.body;
+
+  if (!tableName || !columns) {
+    return res.status(400).send('Table name and columns are required');
+  }
+
+  const columnsDefinition = columns.map(col => `${col.name} ${col.type}`).join(', ');
+  const query = `CREATE TABLE ${tableName} (${columnsDefinition})`;
+
+  pool.query(query, (err, results) => {
+    if (err) {
+      console.error(`Error creating table ${tableName}:`, err);
+      return res.status(500).send(`Error creating table ${tableName}`);
+    }
+    res.status(201).send(`Table ${tableName} created successfully`);
+  });
+});
+
+// Route to delete a table
+app.delete('/delete-table/:tableName', (req, res) => {
+  const tableName = req.params.tableName;
+
+  if (!tableName) {
+    return res.status(400).send('Table name is required');
+  }
+
+  const query = `DROP TABLE IF EXISTS ${tableName}`;
+
+  pool.query(query, (err, results) => {
+    if (err) {
+      console.error(`Error deleting table ${tableName}:`, err);
+      return res.status(500).send(`Error deleting table ${tableName}`);
+    }
+    res.send(`Table ${tableName} deleted successfully`);
+  });
+});
+
 // Route to update data in a specific table
 app.put('/update-table-data', async (req, res) => {
   const connection = await pool.getConnection();
@@ -75,9 +114,6 @@ app.put('/update-table-data', async (req, res) => {
       connection.release();
   }
 });
-
-
-
 
 // Define a route to fetch data from any agriculture table
 app.get('/agriculture/:dataset', (req, res) => {
