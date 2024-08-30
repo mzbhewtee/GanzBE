@@ -54,52 +54,28 @@ app.get('/table-data/:tableName', (req, res) => {
 });
 
 // Route to update data in a specific table
-app.put('/update-table-data', (req, res) => {
-  const { tableName, data } = req.body;
-
-  // Validate table name to prevent SQL injection
-  const validTables = [
-    'agriculture_data', 'agriculture_nigeria', 'agriculture_kenya',
-    'agriculture_rwanda', 'agriculture_southafrica',
-    'climate_kenya', 'climate_nigeria', 'climate_rwanda', 'climate_southafrica'
-  ];
-
-  if (!validTables.includes(tableName)) {
-    return res.status(400).send('Invalid table name');
-  }
-
-  if (!Array.isArray(data) || data.length === 0) {
-    return res.status(400).send('No data provided');
-  }
-
+app.put('/update-table-data', async (req, res) => {
+  const connection = await pool.getConnection();
   try {
-    // Generate the UPDATE queries
-    const updates = data.map(row => {
-      const columns = Object.keys(row);
-      const values = Object.values(row);
-      const setClause = columns.map((col, i) => `${col} = ?`).join(', ');
-      return `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
-    });
-
-    const ids = data.map(row => row.id);
-    const values = data.flatMap(row => Object.values(row).slice(0, -1)); // Exclude 'id' column values
-
-    console.log('Updates:', updates);
-    console.log('Values:', values);
-    console.log('IDs:', ids);
-
-    pool.query(updates.join('; '), [...values, ...ids], (err, results) => {
-      if (err) {
-        console.error('Error executing query:', err);
-        return res.status(500).send('Error updating table data');
+      const updates = req.body.updates; // Array of update objects
+      for (const update of updates) {
+          const { id, ...fields } = update; // Destructure and extract ID
+          const query = 'UPDATE agriculture_rwanda SET ' +
+              Object.keys(fields).map(key => `${key} = ?`).join(', ') + 
+              ' WHERE id = ?';
+          const values = [...Object.values(fields), id];
+          
+          await connection.query(query, values);
       }
-      res.send('Table data updated successfully');
-    });
+      res.sendStatus(200); // Success
   } catch (error) {
-    console.error('Error in update-table-data route:', error);
-    res.status(500).send('Internal server error');
+      console.error('Error updating table data:', error);
+      res.status(500).send('Internal Server Error');
+  } finally {
+      connection.release();
   }
 });
+
 
 
 
