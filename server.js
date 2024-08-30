@@ -57,7 +57,18 @@ app.get('/table-data/:tableName', (req, res) => {
 app.put('/update-table-data', (req, res) => {
   const { tableName, data } = req.body;
 
-  // Generate the UPDATE query based on the data
+  // Validate table name to prevent SQL injection
+  const validTables = [
+    'agriculture_data', 'agriculture_nigeria', 'agriculture_kenya',
+    'agriculture_rwanda', 'agriculture_southafrica',
+    'climate_kenya', 'climate_nigeria', 'climate_rwanda', 'climate_southafrica'
+  ];
+
+  if (!validTables.includes(tableName)) {
+    return res.status(400).send('Invalid table name');
+  }
+
+  // Generate the UPDATE queries
   const updates = data.map(row => {
     const columns = Object.keys(row);
     const values = Object.values(row);
@@ -65,7 +76,10 @@ app.put('/update-table-data', (req, res) => {
     return `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
   });
 
-  pool.query(updates.join('; '), values.flat().concat(ids), (err, results) => {
+  const ids = data.map(row => row.id);
+  const values = data.flatMap(row => Object.values(row).slice(0, -1)); // Exclude 'id' column values
+
+  pool.query(updates.join('; '), [...values, ...ids], (err, results) => {
     if (err) {
       console.error('Error updating table data:', err);
       return res.status(500).send('Error updating table data');
@@ -73,6 +87,7 @@ app.put('/update-table-data', (req, res) => {
     res.send('Table data updated successfully');
   });
 });
+
 
 // Define a route to fetch data from any agriculture table
 app.get('/agriculture/:dataset', (req, res) => {
