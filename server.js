@@ -92,16 +92,13 @@ app.delete('/delete-table/:tableName', (req, res) => {
   });
 });
 
-// Update table data
 app.put('/:tableName', (req, res) => {
   const tableName = req.params.tableName;
-  const data = req.body;
+  const data = req.body; // Expecting an array of objects with unique identifying fields
 
-  const updates = data.map(row => {
-      const columns = Object.keys(row).map(col => `${col} = ?`).join(', ');
-      const values = Object.values(row);
-      return { columns, values };
-  });
+  if (!Array.isArray(data) || data.length === 0) {
+      return res.status(400).send('Invalid data format.');
+  }
 
   db.beginTransaction((err) => {
       if (err) {
@@ -109,8 +106,21 @@ app.put('/:tableName', (req, res) => {
           return res.status(500).send('Error updating table data');
       }
 
-      updates.forEach(({ columns, values }, index) => {
-          const query = `UPDATE ?? SET ${columns} WHERE id = ?`; // Assumes a primary key `id`
+      let queriesCompleted = 0;
+
+      data.forEach(row => {
+          const uniqueColumns = Object.keys(row).filter(col => col !== 'updateField');
+          const updateFields = Object.keys(row).filter(col => col === 'updateField');
+          
+          if (uniqueColumns.length === 0 || updateFields.length === 0) {
+              return res.status(400).send('No unique columns or update fields specified.');
+          }
+
+          const conditions = uniqueColumns.map(col => `${col} = ?`).join(' AND ');
+          const updates = updateFields.map(col => `${col} = ?`).join(', ');
+          const values = [...uniqueColumns.map(col => row[col]), ...updateFields.map(col => row[col])];
+          
+          const query = `UPDATE ?? SET ${updates} WHERE ${conditions}`;
           db.query(query, [tableName, ...values], (err) => {
               if (err) {
                   console.error('Error updating row:', err);
@@ -119,7 +129,8 @@ app.put('/:tableName', (req, res) => {
                   });
               }
 
-              if (index === updates.length - 1) {
+              queriesCompleted++;
+              if (queriesCompleted === data.length) {
                   db.commit((err) => {
                       if (err) {
                           console.error('Error committing transaction:', err);
@@ -127,7 +138,6 @@ app.put('/:tableName', (req, res) => {
                               res.status(500).send('Error updating table data');
                           });
                       }
-
                       res.send('Table data updated successfully');
                   });
               }
@@ -135,7 +145,6 @@ app.put('/:tableName', (req, res) => {
       });
   });
 });
-
 
 // Define a route to fetch data from any agriculture table
 app.get('/agriculture/:dataset', (req, res) => {
