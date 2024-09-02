@@ -92,52 +92,49 @@ app.delete('/delete-table/:tableName', (req, res) => {
   });
 });
 
-// Route to update data in a specific table
-app.put('/update-table-data/:tableName', async (req, res) => {
-  const tableName = req.params.tableName; // Get table name from the request parameters
-  const updates = req.body.updates; // Array of update objects
+// Update table data
+app.put('/:tableName', (req, res) => {
+  const tableName = req.params.tableName;
+  const data = req.body;
 
-  // Validate the inputs
-  if (!tableName || !updates || !Array.isArray(updates)) {
-    return res.status(400).send('Table name and updates are required');
-  }
+  const updates = data.map(row => {
+      const columns = Object.keys(row).map(col => `${col} = ?`).join(', ');
+      const values = Object.values(row);
+      return { columns, values };
+  });
 
-  const connection = await pool.getConnection(); // Get a connection from the pool
-  try {
-    // Iterate over each update object
-    for (const update of updates) {
-      const { id, ...fields } = update; // Destructure to get the ID and the rest of the fields
-      
-      // Validate that the ID is present
-      if (!id) {
-        return res.status(400).send('ID is required for each update');
+  db.beginTransaction((err) => {
+      if (err) {
+          console.error('Error starting transaction:', err);
+          return res.status(500).send('Error updating table data');
       }
 
-      // Construct the SQL query for updating the data
-      const query = `UPDATE ${tableName} SET ` +
-                    Object.keys(fields).map(key => `${key} = ?`).join(', ') +
-                    ' WHERE id = ?';
-      
-      const values = [...Object.values(fields), id]; // Values array for the query
+      updates.forEach(({ columns, values }, index) => {
+          const query = `UPDATE ?? SET ${columns} WHERE id = ?`; // Assumes a primary key `id`
+          db.query(query, [tableName, ...values], (err) => {
+              if (err) {
+                  console.error('Error updating row:', err);
+                  return db.rollback(() => {
+                      res.status(500).send('Error updating table data');
+                  });
+              }
 
-      // Log the query and values for debugging
-      console.log('Executing query:', query);
-      console.log('With values:', values);
+              if (index === updates.length - 1) {
+                  db.commit((err) => {
+                      if (err) {
+                          console.error('Error committing transaction:', err);
+                          return db.rollback(() => {
+                              res.status(500).send('Error updating table data');
+                          });
+                      }
 
-      // Execute the update query
-      await connection.query(query, values);
-    }
-
-    res.sendStatus(200); // Send success status
-  } catch (error) {
-    // Log the detailed error for debugging
-    console.error(`Error updating data in table ${tableName}:`, error.message, 'Query:', query, 'Values:', values);
-    res.status(500).send(`Internal Server Error updating data in table ${tableName}`);
-  } finally {
-    connection.release(); // Release the connection back to the pool
-  }
+                      res.send('Table data updated successfully');
+                  });
+              }
+          });
+      });
+  });
 });
-
 
 
 // Define a route to fetch data from any agriculture table
@@ -208,6 +205,7 @@ app.get('/climatechangeemissions', (req, res) => {
     res.json(results);
   });
 });
+
 
 // Start the server
 app.listen(port, () => {
