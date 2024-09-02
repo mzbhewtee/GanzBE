@@ -1,215 +1,120 @@
 const express = require('express');
-const mysql = require('mysql2');
 const cors = require('cors');
-require('dotenv').config(); // For loading environment variables
+const mysql = require('mysql2/promise');
 
 const app = express();
-const port = process.env.PORT || 5000; // Use environment variable or default to 5000
+app.use(express.json()); // For parsing application/json
+app.use(cors()); // Enable CORS for all routes
 
-app.use(cors());
-app.use(express.json());
-
-// Create a MySQL connection pool
 const pool = mysql.createPool({
-  connectionLimit: 10, // Set the maximum number of connections in the pool
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+    host: 'localhost',
+    user: 'your-username',
+    password: 'your-password',
+    database: 'your-database',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-// Test the connection
-pool.getConnection((err, connection) => {
-  if (err) {
-    console.error('Database connection error:', err);
-    return;
-  }
-  console.log('Connected to the MySQL database.');
-  connection.release(); // Release the connection back to the pool
-});
-
-// Route to get all table names
-app.get('/tables', (req, res) => {
-  pool.query("SHOW TABLES", (err, results) => {
-    if (err) {
-      console.error('Error fetching table names:', err);
-      return res.status(500).send('Error fetching table names');
+// Route to fetch table names
+app.get('/tables', async (req, res) => {
+    try {
+        const connection = await pool.getConnection();
+        const [rows] = await connection.query('SHOW TABLES');
+        connection.release();
+        const tableNames = rows.map(row => Object.values(row)[0]);
+        res.json(tableNames);
+    } catch (error) {
+        console.error('Error fetching tables:', error);
+        res.status(500).send('Internal Server Error');
     }
-    const tables = results.map(row => Object.values(row)[0]);
-    res.json(tables);
-  });
 });
 
-// Route to get data from a specific table
-app.get('/table-data/:tableName', (req, res) => {
-  const tableName = req.params.tableName;
-
-  pool.query(`SELECT * FROM ${tableName}`, (err, results) => {
-    if (err) {
-      console.error(`Error fetching data from ${tableName}:`, err);
-      return res.status(500).send(`Error fetching data from ${tableName}`);
+// Route to fetch data from a specific table
+app.get('/table-data/:tableName', async (req, res) => {
+    const tableName = req.params.tableName;
+    try {
+        const connection = await pool.getConnection();
+        const [rows] = await connection.query(`SELECT * FROM ${tableName}`);
+        connection.release();
+        res.json(rows);
+    } catch (error) {
+        console.error(`Error fetching data from table ${tableName}:`, error);
+        res.status(500).send('Internal Server Error');
     }
-    res.json(results);
-  });
-});
-
-// Route to create a new table
-app.post('/create-table', (req, res) => {
-  const { tableName, columns } = req.body;
-
-  if (!tableName || !columns) {
-    return res.status(400).send('Table name and columns are required');
-  }
-
-  const columnsDefinition = columns.map(col => `${col.name} ${col.type}`).join(', ');
-  const query = `CREATE TABLE ${tableName} (${columnsDefinition})`;
-
-  pool.query(query, (err, results) => {
-    if (err) {
-      console.error(`Error creating table ${tableName}:`, err);
-      return res.status(500).send(`Error creating table ${tableName}`);
-    }
-    res.status(201).send(`Table ${tableName} created successfully`);
-  });
-});
-
-// Route to delete a table
-app.delete('/delete-table/:tableName', (req, res) => {
-  const tableName = req.params.tableName;
-
-  if (!tableName) {
-    return res.status(400).send('Table name is required');
-  }
-
-  const query = `DROP TABLE IF EXISTS ${tableName}`;
-
-  pool.query(query, (err, results) => {
-    if (err) {
-      console.error(`Error deleting table ${tableName}:`, err);
-      return res.status(500).send(`Error deleting table ${tableName}`);
-    }
-    res.send(`Table ${tableName} deleted successfully`);
-  });
 });
 
 // Route to update data in a specific table
 app.put('/update-table-data/:tableName', async (req, res) => {
-  const tableName = req.params.tableName; // Get table name from the request parameters
-  const updates = req.body.updates; // Array of update objects
+    const tableName = req.params.tableName;
+    const updates = req.body.updates; // Array of update objects
 
-  // Validate the inputs
-  if (!tableName || !updates || !Array.isArray(updates)) {
-    return res.status(400).send('Table name and updates are required');
-  }
-
-  const connection = await pool.getConnection(); // Get a connection from the pool
-  try {
-    // Iterate over each update object
-    for (const update of updates) {
-      const { id, ...fields } = update; // Destructure to get the ID and the rest of the fields
-      
-      // Validate that the ID is present
-      if (!id) {
-        return res.status(400).send('ID is required for each update');
-      }
-
-      // Construct the SQL query for updating the data
-      const query = `UPDATE ${tableName} SET ` +
-                    Object.keys(fields).map(key => `${key} = ?`).join(', ') +
-                    ' WHERE id = ?';
-      
-      const values = [...Object.values(fields), id]; // Values array for the query
-
-      // Log the query and values for debugging
-      console.log('Executing query:', query);
-      console.log('With values:', values);
-
-      // Execute the update query
-      await connection.query(query, values);
+    if (!tableName || !updates || !Array.isArray(updates)) {
+        return res.status(400).send('Table name and updates are required');
     }
 
-    res.sendStatus(200); // Send success status
-  } catch (error) {
-    // Log the detailed error for debugging
-    console.error(`Error updating data in table ${tableName}:`, error.message, 'Query:', query, 'Values:', values);
-    res.status(500).send(`Internal Server Error updating data in table ${tableName}`);
-  } finally {
-    connection.release(); // Release the connection back to the pool
-  }
-});
+    const connection = await pool.getConnection();
+    try {
+        for (const update of updates) {
+            const { id, ...fields } = update; // Destructure to get the ID and the rest of the fields
 
+            const query = `UPDATE ${tableName} SET ` +
+                        Object.keys(fields).map(key => `${key} = ?`).join(', ') +
+                        ' WHERE id = ?';
+            
+            const values = [...Object.values(fields), id]; // Values array for the query
 
+            await connection.query(query, values); // Execute the update query
+        }
 
-// Define a route to fetch data from any agriculture table
-app.get('/agriculture/:dataset', (req, res) => {
-  const dataset = req.params.dataset;
-  const validTables = [
-    'agriculture_data',
-    'agriculture_kenya',
-    'agriculture_nigeria',
-    'agriculture_rwanda',
-    'agriculture_southafrica'
-  ];
-
-  if (!validTables.includes(dataset)) {
-    return res.status(400).send('Invalid dataset specified');
-  }
-
-  pool.query(`SELECT * FROM ${dataset}`, (err, results) => {
-    if (err) {
-      console.error(`Error fetching data from ${dataset}:`, err);
-      return res.status(500).send(`Error fetching data from ${dataset}`);
+        res.sendStatus(200); // Send success status
+    } catch (error) {
+        console.error(`Error updating data in table ${tableName}:`, error);
+        res.status(500).send(`Internal Server Error updating data in table ${tableName}`);
+    } finally {
+        connection.release(); // Release the connection back to the pool
     }
-    res.json(results);
-  });
 });
 
-// Define a route to fetch climate data
-app.get('/climate/:dataset', (req, res) => {
-  const dataset = req.params.dataset;
-  const validTables = [
-    'climate_kenya',
-    'climate_nigeria',
-    'climate_rwanda',
-    'climate_southafrica'
-  ];
+// Route to create a new table
+app.post('/create-table', async (req, res) => {
+    const { tableName, columns } = req.body;
 
-  if (!validTables.includes(dataset)) {
-    return res.status(400).send('Invalid dataset specified');
-  }
-
-  pool.query(`SELECT * FROM ${dataset}`, (err, results) => {
-    if (err) {
-      console.error(`Error fetching data from ${dataset}:`, err);
-      return res.status(500).send(`Error fetching data from ${dataset}`);
+    if (!tableName || !columns || !Array.isArray(columns) || columns.length === 0) {
+        return res.status(400).send('Table name and columns are required');
     }
-    res.json(results);
-  });
-});
 
-// Define a route to fetch land use data
-app.get('/land', (req, res) => {
-  pool.query('SELECT * FROM landuseoverview_rwanda', (err, results) => {
-    if (err) {
-      console.error('Error fetching data from landuseoverview_rwanda:', err);
-      return res.status(500).send('Error fetching data from landuseoverview_rwanda');
+    try {
+        const connection = await pool.getConnection();
+        const columnDefinitions = columns.map(col => `${col.name} ${col.type}`).join(', ');
+        const query = `CREATE TABLE ${tableName} (id INT AUTO_INCREMENT PRIMARY KEY, ${columnDefinitions})`;
+        await connection.query(query);
+        connection.release();
+        res.sendStatus(201); // Created
+    } catch (error) {
+        console.error('Error creating table:', error);
+        res.status(500).send('Internal Server Error');
     }
-    res.json(results);
-  });
 });
 
-// Define a route to fetch climate change emissions data
-app.get('/climatechangeemissions', (req, res) => {
-  pool.query('SELECT * FROM climatechangeemissions', (err, results) => {
-    if (err) {
-      console.error('Error fetching data from climatechangeemissions:', err);
-      return res.status(500).send('Error fetching data from climatechangeemissions');
+// Route to delete a table
+app.delete('/delete-table/:tableName', async (req, res) => {
+    const tableName = req.params.tableName;
+
+    if (!tableName) {
+        return res.status(400).send('Table name is required');
     }
-    res.json(results);
-  });
+
+    try {
+        const connection = await pool.getConnection();
+        await connection.query(`DROP TABLE ${tableName}`);
+        connection.release();
+        res.sendStatus(200); // OK
+    } catch (error) {
+        console.error('Error deleting table:', error);
+        res.status(500).send('Internal Server Error');
+    }
 });
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-});
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
