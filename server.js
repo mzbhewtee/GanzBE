@@ -93,27 +93,52 @@ app.delete('/delete-table/:tableName', (req, res) => {
 });
 
 // Route to update data in a specific table
-app.put('/update-table-data', async (req, res) => {
-  const connection = await pool.getConnection();
+app.put('/update-table-data/:tableName', async (req, res) => {
+  const tableName = req.params.tableName; // Get table name from the request parameters
+  const updates = req.body.updates; // Array of update objects
+
+  // Validate the inputs
+  if (!tableName || !updates || !Array.isArray(updates)) {
+    return res.status(400).send('Table name and updates are required');
+  }
+
+  const connection = await pool.getConnection(); // Get a connection from the pool
   try {
-      const updates = req.body.updates; // Array of update objects
-      for (const update of updates) {
-          const { id, ...fields } = update; // Destructure and extract ID
-          const query = 'UPDATE agriculture_rwanda SET ' +
-              Object.keys(fields).map(key => `${key} = ?`).join(', ') + 
-              ' WHERE id = ?';
-          const values = [...Object.values(fields), id];
-          
-          await connection.query(query, values);
+    // Iterate over each update object
+    for (const update of updates) {
+      const { id, ...fields } = update; // Destructure to get the ID and the rest of the fields
+      
+      // Validate that the ID is present
+      if (!id) {
+        return res.status(400).send('ID is required for each update');
       }
-      res.sendStatus(200); // Success
+
+      // Construct the SQL query for updating the data
+      const query = `UPDATE ${tableName} SET ` +
+                    Object.keys(fields).map(key => `${key} = ?`).join(', ') +
+                    ' WHERE id = ?';
+      
+      const values = [...Object.values(fields), id]; // Values array for the query
+
+      // Log the query and values for debugging
+      console.log('Executing query:', query);
+      console.log('With values:', values);
+
+      // Execute the update query
+      await connection.query(query, values);
+    }
+
+    res.sendStatus(200); // Send success status
   } catch (error) {
-      console.error('Error updating table data:', error);
-      res.status(500).send('Internal Server Error');
+    // Log the detailed error for debugging
+    console.error(`Error updating data in table ${tableName}:`, error.message, 'Query:', query, 'Values:', values);
+    res.status(500).send(`Internal Server Error updating data in table ${tableName}`);
   } finally {
-      connection.release();
+    connection.release(); // Release the connection back to the pool
   }
 });
+
+
 
 // Define a route to fetch data from any agriculture table
 app.get('/agriculture/:dataset', (req, res) => {
