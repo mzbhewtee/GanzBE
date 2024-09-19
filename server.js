@@ -1,6 +1,9 @@
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
+const multer = require('multer');
+const fs = require('fs');
+const xlsx = require('xlsx'); // For handling Excel files
 require('dotenv').config(); // For loading environment variables
 
 const app = express();
@@ -8,6 +11,9 @@ const port = process.env.PORT || 5000; // Use environment variable or default to
 
 app.use(cors());
 app.use(express.json());
+
+// Configure multer for file uploads
+const upload = multer({ dest: 'uploads/' });
 
 // Create a MySQL connection pool
 const pool = mysql.createPool({
@@ -44,7 +50,7 @@ app.get('/tables', (req, res) => {
 app.get('/table-data/:tableName', (req, res) => {
   const tableName = req.params.tableName;
 
-  pool.query(`SELECT * FROM ${tableName}`, (err, results) => {
+  pool.query(`SELECT * FROM ${mysql.escapeId(tableName)}`, (err, results) => {
     if (err) {
       console.error(`Error fetching data from ${tableName}:`, err);
       return res.status(500).send(`Error fetching data from ${tableName}`);
@@ -57,12 +63,12 @@ app.get('/table-data/:tableName', (req, res) => {
 app.post('/create-table', (req, res) => {
   const { tableName, columns } = req.body;
 
-  if (!tableName || !columns) {
+  if (!tableName || !columns || !Array.isArray(columns)) {
     return res.status(400).send('Table name and columns are required');
   }
 
-  const columnsDefinition = columns.map(col => `${col.name} ${col.type}`).join(', ');
-  const query = `CREATE TABLE ${tableName} (${columnsDefinition})`;
+  const columnsDefinition = columns.map(col => `${mysql.escapeId(col.name)} ${col.type}`).join(', ');
+  const query = `CREATE TABLE IF NOT EXISTS ${mysql.escapeId(tableName)} (${columnsDefinition})`;
 
   pool.query(query, (err, results) => {
     if (err) {
@@ -81,7 +87,7 @@ app.delete('/delete-table/:tableName', (req, res) => {
     return res.status(400).send('Table name is required');
   }
 
-  const query = `DROP TABLE IF EXISTS ${tableName}`;
+  const query = `DROP TABLE IF EXISTS ${mysql.escapeId(tableName)}`;
 
   pool.query(query, (err, results) => {
     if (err) {
@@ -92,58 +98,120 @@ app.delete('/delete-table/:tableName', (req, res) => {
   });
 });
 
-app.put('/:tableName', (req, res) => {
+// Route to update data in a table
+app.put('/update-table/:tableName', (req, res) => {
   const tableName = req.params.tableName;
-  const data = req.body; // Expecting an array of objects with unique identifying fields
+  const data = req.body; // Expecting an array of objects
 
   if (!Array.isArray(data) || data.length === 0) {
-      return res.status(400).send('Invalid data format.');
+    return res.status(400).send('Invalid data format.');
   }
 
-  db.beginTransaction((err) => {
-      if (err) {
-          console.error('Error starting transaction:', err);
-          return res.status(500).send('Error updating table data');
-      }
+  pool.getConnection((err, connection) => {
+    if (err) return res.status(500).send('Error connecting to the database');
+
+    connection.beginTransaction((err) => {
+      if (err) return connection.rollback(() => res.status(500).send('Error starting transaction'));
 
       let queriesCompleted = 0;
 
       data.forEach(row => {
-          const uniqueColumns = Object.keys(row).filter(col => col !== 'updateField');
-          const updateFields = Object.keys(row).filter(col => col === 'updateField');
-          
-          if (uniqueColumns.length === 0 || updateFields.length === 0) {
-              return res.status(400).send('No unique columns or update fields specified.');
+        const uniqueColumns = Object.keys(row).filter(col => col !== 'updateField');
+        const updateFields = Object.keys(row).filter(col => col === 'updateField');
+        
+        if (uniqueColumns.length === 0 || updateFields.length === 0) {
+          return res.status(400).send('No unique columns or update fields specified.');
+        }
+
+        const conditions = uniqueColumns.map(col => `${mysql.escapeId(col)} = ?`).join(' AND ');
+        const updates = updateFields.map(col => `${mysql.escapeId(col)} = ?`).join(', ');
+        const values = [...uniqueColumns.map(col => row[col]), ...updateFields.map(col => row[col])];
+        
+        const query = `UPDATE ${mysql.escapeId(tableName)} SET ${updates} WHERE ${conditions}`;
+        connection.query(query, values, (err) => {
+          if (err) {
+            console.error('Error updating row:', err);
+            return connection.rollback(() => res.status(500).send('Error updating table data'));
           }
 
-          const conditions = uniqueColumns.map(col => `${col} = ?`).join(' AND ');
-          const updates = updateFields.map(col => `${col} = ?`).join(', ');
-          const values = [...uniqueColumns.map(col => row[col]), ...updateFields.map(col => row[col])];
-          
-          const query = `UPDATE ?? SET ${updates} WHERE ${conditions}`;
-          db.query(query, [tableName, ...values], (err) => {
+          queriesCompleted++;
+          if (queriesCompleted === data.length) {
+            connection.commit((err) => {
               if (err) {
-                  console.error('Error updating row:', err);
-                  return db.rollback(() => {
-                      res.status(500).send('Error updating table data');
-                  });
+                console.error('Error committing transaction:', err);
+                return connection.rollback(() => res.status(500).send('Error updating table data'));
               }
-
-              queriesCompleted++;
-              if (queriesCompleted === data.length) {
-                  db.commit((err) => {
-                      if (err) {
-                          console.error('Error committing transaction:', err);
-                          return db.rollback(() => {
-                              res.status(500).send('Error updating table data');
-                          });
-                      }
-                      res.send('Table data updated successfully');
-                  });
-              }
-          });
+              connection.release();
+              res.send('Table data updated successfully');
+            });
+          }
+        });
       });
+    });
   });
+});
+
+// Route to upload data to a table from Excel file
+app.post('/upload-data/:tableName', upload.single('file'), (req, res) => {
+  const tableName = req.params.tableName;
+  const filePath = req.file.path;
+
+  if (!filePath) {
+    return res.status(400).send('No file uploaded');
+  }
+
+  try {
+    const workbook = xlsx.readFile(filePath);
+    const sheetNames = workbook.SheetNames;
+    const sheet = workbook.Sheets[sheetNames[0]];
+    const data = xlsx.utils.sheet_to_json(sheet);
+
+    if (data.length === 0) {
+      fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
+      return res.status(400).send('No data found in the file');
+    }
+
+    const columns = Object.keys(data[0]);
+    const placeholders = columns.map(() => '?').join(', ');
+    const query = `INSERT INTO ${mysql.escapeId(tableName)} (${columns.map(col => mysql.escapeId(col)).join(', ')}) VALUES (${placeholders})`;
+
+    pool.getConnection((err, connection) => {
+      if (err) return res.status(500).send('Error connecting to the database');
+
+      connection.beginTransaction((err) => {
+        if (err) return connection.rollback(() => res.status(500).send('Error starting transaction'));
+
+        let queriesCompleted = 0;
+
+        data.forEach((row) => {
+          const values = columns.map(col => row[col]);
+          connection.query(query, values, (err) => {
+            if (err) {
+              console.error('Error inserting row:', err);
+              return connection.rollback(() => res.status(500).send('Error inserting data'));
+            }
+
+            queriesCompleted++;
+            if (queriesCompleted === data.length) {
+              connection.commit((err) => {
+                if (err) {
+                  console.error('Error committing transaction:', err);
+                  return connection.rollback(() => res.status(500).send('Error inserting data'));
+                }
+                connection.release();
+                fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
+                res.send('Data uploaded successfully');
+              });
+            }
+          });
+        });
+      });
+    });
+  } catch (error) {
+    console.error('Error processing Excel file:', error);
+    fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
+    res.status(500).send('Error processing Excel file');
+  }
 });
 
 // Define a route to fetch data from any agriculture table
@@ -161,7 +229,7 @@ app.get('/agriculture/:dataset', (req, res) => {
     return res.status(400).send('Invalid dataset specified');
   }
 
-  pool.query(`SELECT * FROM ${dataset}`, (err, results) => {
+  pool.query(`SELECT * FROM ${mysql.escapeId(dataset)}`, (err, results) => {
     if (err) {
       console.error(`Error fetching data from ${dataset}:`, err);
       return res.status(500).send(`Error fetching data from ${dataset}`);
@@ -184,7 +252,7 @@ app.get('/climate/:dataset', (req, res) => {
     return res.status(400).send('Invalid dataset specified');
   }
 
-  pool.query(`SELECT * FROM ${dataset}`, (err, results) => {
+  pool.query(`SELECT * FROM ${mysql.escapeId(dataset)}`, (err, results) => {
     if (err) {
       console.error(`Error fetching data from ${dataset}:`, err);
       return res.status(500).send(`Error fetching data from ${dataset}`);
@@ -215,8 +283,7 @@ app.get('/climatechangeemissions', (req, res) => {
   });
 });
 
-
 // Start the server
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server is running on port ${port}`);
 });
