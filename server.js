@@ -152,65 +152,32 @@ app.put('/update-table/:tableName', (req, res) => {
 });
 
 // Route to upload data to a table from Excel file
-app.post('/upload-data/:tableName', upload.single('file'), (req, res) => {
-  const tableName = req.params.tableName;
-  const filePath = req.file.path;
+// Route to upload data to a specific table
+app.post('/upload/:tableName', async (req, res) => {
+  const { tableName } = req.params;
+  const { data } = req.body; // This is the parsed CSV data
 
-  if (!filePath) {
-    return res.status(400).send('No file uploaded');
+  if (!data || !data.length) {
+      return res.status(400).send('No data to upload.');
   }
 
+  const connection = await pool.getConnection();
+
   try {
-    const workbook = xlsx.readFile(filePath);
-    const sheetNames = workbook.SheetNames;
-    const sheet = workbook.Sheets[sheetNames[0]];
-    const data = xlsx.utils.sheet_to_json(sheet);
+      // Construct the SQL query for inserting data
+      const keys = Object.keys(data[0]);
+      const values = data.map(row => keys.map(key => row[key]));
+      const placeholders = values.map(() => `(${keys.map(() => '?').join(',')})`).join(',');
 
-    if (data.length === 0) {
-      fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
-      return res.status(400).send('No data found in the file');
-    }
-
-    const columns = Object.keys(data[0]);
-    const placeholders = columns.map(() => '?').join(', ');
-    const query = `INSERT INTO ${mysql.escapeId(tableName)} (${columns.map(col => mysql.escapeId(col)).join(', ')}) VALUES (${placeholders})`;
-
-    pool.getConnection((err, connection) => {
-      if (err) return res.status(500).send('Error connecting to the database');
-
-      connection.beginTransaction((err) => {
-        if (err) return connection.rollback(() => res.status(500).send('Error starting transaction'));
-
-        let queriesCompleted = 0;
-
-        data.forEach((row) => {
-          const values = columns.map(col => row[col]);
-          connection.query(query, values, (err) => {
-            if (err) {
-              console.error('Error inserting row:', err);
-              return connection.rollback(() => res.status(500).send('Error inserting data'));
-            }
-
-            queriesCompleted++;
-            if (queriesCompleted === data.length) {
-              connection.commit((err) => {
-                if (err) {
-                  console.error('Error committing transaction:', err);
-                  return connection.rollback(() => res.status(500).send('Error inserting data'));
-                }
-                connection.release();
-                fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
-                res.send('Data uploaded successfully');
-              });
-            }
-          });
-        });
-      });
-    });
+      const sql = `INSERT INTO ${tableName} (${keys.join(',')}) VALUES ${placeholders}`;
+      
+      await connection.query(sql, values.flat());
+      res.status(200).send('Data uploaded successfully!');
   } catch (error) {
-    console.error('Error processing Excel file:', error);
-    fs.unlink(filePath, (err) => { if (err) console.error('Error deleting file:', err); });
-    res.status(500).send('Error processing Excel file');
+      console.error('Error uploading data:', error);
+      res.status(500).send('Failed to upload data.');
+  } finally {
+      connection.release();
   }
 });
 
