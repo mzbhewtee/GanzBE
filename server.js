@@ -12,8 +12,9 @@ const port = process.env.PORT || 5000; // Use environment variable or default to
 app.use(cors());
 app.use(express.json());
 
-// Configure multer for file uploads
-const upload = multer({ dest: 'uploads/' });
+app.use(fileUpload({
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+}));
 
 // Create a MySQL connection pool
 const pool = mysql.createPool({
